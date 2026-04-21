@@ -22,6 +22,8 @@ const Multiplayer = (() => {
   let onError = null;
   let pingTimer = null;
   let lastPongTs = Date.now();
+  let lastPingSentTs = 0;
+  let rttMs = 0;
 
   function generateRoomCode() {
     // peer ID gets prefixed for namespacing on the public broker
@@ -82,8 +84,12 @@ const Multiplayer = (() => {
       startHealthCheck();
     });
     conn.on('data', data => {
-      if (data && data.type === '__ping') { try { conn.send({ type: '__pong' }); } catch {} return; }
-      if (data && data.type === '__pong') { lastPongTs = Date.now(); return; }
+      if (data && data.type === '__ping') { try { conn.send({ type: '__pong', t: data.t }); } catch {} return; }
+      if (data && data.type === '__pong') {
+        lastPongTs = Date.now();
+        if (data.t) rttMs = Date.now() - data.t;
+        return;
+      }
       onMessage && onMessage(data);
     });
     conn.on('close', () => {
@@ -99,12 +105,13 @@ const Multiplayer = (() => {
     stopHealthCheck();
     pingTimer = setInterval(() => {
       if (!conn || !conn.open) return;
-      try { conn.send({ type: '__ping' }); } catch {}
+      lastPingSentTs = Date.now();
+      try { conn.send({ type: '__ping', t: lastPingSentTs }); } catch {}
       if (Date.now() - lastPongTs > 6000) {
         // connection appears dead
         try { conn.close(); } catch {}
       }
-    }, 2000);
+    }, 1500);
   }
   function stopHealthCheck() { if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } }
 
@@ -129,5 +136,6 @@ const Multiplayer = (() => {
     get isHost() { return isHost; },
     get id() { return myId; },
     get connected() { return !!(conn && conn.open); },
+    get ping() { return rttMs; },
   };
 })();

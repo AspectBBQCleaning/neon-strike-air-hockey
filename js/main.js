@@ -1,22 +1,44 @@
 /* ========================================================================
-   Main — wires lobby UI to game / AI / multiplayer / wallet.
+   Main — wires lobby UI to game / AI / multiplayer / wallet / auth.
    ======================================================================== */
 (() => {
   // -- DOM refs --
   const $ = (id) => document.getElementById(id);
   const lobby = $('lobby');
   const gameScreen = $('game');
-  const walletAmountEl = $('walletAmount');
+
+  // top bar
+  const accountChip = $('accountChip');
+  const accountIcon = $('accountIcon');
+  const accountName = $('accountName');
   const walletPillEl = $('walletPill');
+  const walletAmountEl = $('walletAmount');
+  const walletSymbolEl = $('walletSymbol');
+  const walletLabelEl = $('walletLabel');
+  const settingsBtn = $('settingsBtn');
+  const pingPill = $('pingPill');
+  const pingMs = $('pingMs');
+
+  // currency strip
+  const currencyTabs = $('currencyTabs');
+  const depositOpenBtn = $('depositOpenBtn');
+  const depositOpenBtn2 = $('depositOpenBtn2');
+
+  // bet/diff
+  const aiBetCur = $('aiBetCur');
+  const mpBetCur = $('mpBetCur');
+  const aiBetControls = $('aiBetControls');
+  const mpBetControls = $('mpBetControls');
+  const playAiBtn = $('playAiBtn');
+  const diffRow = $('diffRow');
+
+  // stats
   const statWins = $('statWins');
   const statLosses = $('statLosses');
   const statStreak = $('statStreak');
   const statBiggest = $('statBiggest');
-  const resetBtn = $('resetBtn');
-  const playAiBtn = $('playAiBtn');
-  const diffRow = $('diffRow');
-  const aiBetButtons = document.querySelectorAll('.mode-card:not(.highlight) .chip-btn');
-  const mpBetButtons = document.querySelectorAll('.chip-btn.mp-bet');
+
+  // mp
   const mpTabs = document.querySelectorAll('.mp-tab');
   const mpHostPanel = $('mpHostPanel');
   const mpJoinPanel = $('mpJoinPanel');
@@ -28,6 +50,8 @@
   const roomHint = $('roomHint');
   const joinHint = $('joinHint');
   const copyBtn = $('copyBtn');
+
+  // game
   const board = $('board');
   const hudP1 = $('hudP1');
   const hudP2 = $('hudP2');
@@ -40,6 +64,8 @@
   const countdownEl = $('countdown');
   const leaveBtn = $('leaveBtn');
   const muteBtn = $('muteBtn');
+
+  // result
   const resultModal = $('resultModal');
   const resultBanner = $('resultBanner');
   const resultScore = $('resultScore');
@@ -47,44 +73,137 @@
   const payoutAmount = $('payoutAmount');
   const rematchBtn = $('rematchBtn');
   const lobbyBtn = $('lobbyBtn');
+
+  // wallet modal
+  const walletModal = $('walletModal');
+  const walletChips = $('walletChips');
+  const walletBtc = $('walletBtc');
+  const walletXrp = $('walletXrp');
+  const btcInChips = $('btcInChips');
+  const xrpInChips = $('xrpInChips');
+  const resetBtn = $('resetBtn');
+
+  // deposit modal
+  const depositModal = $('depositModal');
+  const depositTabs = $('depositTabs');
+  const depositPresets = $('depositPresets');
+  const faucetBtn = $('faucetBtn');
+  const faucetHint = $('faucetHint');
+
+  // auth modal
+  const authModal = $('authModal');
+  const authTabs = $('authTabs');
+  const authForm = $('authForm');
+  const authUser = $('authUser');
+  const authPass = $('authPass');
+  const authSubmit = $('authSubmit');
+  const authHint = $('authHint');
+
+  // settings modal
+  const settingsModal = $('settingsModal');
+  const settingsAccountName = $('settingsAccountName');
+  const settingsAuthBtn = $('settingsAuthBtn');
+  const settingsLogoutRow = $('settingsLogoutRow');
+  const settingsLogoutBtn = $('settingsLogoutBtn');
+  const togglePing = $('togglePing');
+  const toggleSound = $('toggleSound');
+  const settingsResetBtn = $('settingsResetBtn');
+
   const toast = $('toast');
-  const repoLink = $('repoLink');
+
+  // -- bet presets per currency --
+  const PRESETS = {
+    chips: [10, 50, 100, 200, 500],
+    btc:   [0.0001, 0.0005, 0.001, 0.005, 0.01],
+    xrp:   [50, 100, 500, 1000, 5000],
+  };
+  const DEPOSIT_PRESETS = {
+    chips: [100, 500, 1000, 5000, 10000, 50000],
+    btc:   [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05],
+    xrp:   [100, 500, 1000, 5000, 10000, 50000],
+  };
 
   // -- state --
+  let activeCurrency = localStorage.getItem('ns_active_currency') || 'chips';
   let selectedDiff = 'easy';
   let selectedMult = 1.5;
-  let aiBet = 50;
-  let mpBet = 100;
-  let mpMode = 'host';
-  let currentMatch = null;  // { kind: 'ai'|'mp', bet, payout, isHost? }
-  let lastSnapshot = 0;     // host snapshot throttle
+  let aiBet = PRESETS.chips[1];   // 50 chips default
+  let mpBet = PRESETS.chips[2];   // 100 chips default
+  let depositCur = 'chips';
+  let authMode = 'login';
+  let currentMatch = null;
+  let lastSnapshot = 0;
+  let mpHelloPeer = null;
+  let netRaf = 0;
+  let pingTimer = 0;
+  let showPing = localStorage.getItem('ns_show_ping') === '1';
 
   // -- init --
   Game.init(board);
+  refreshAccount();
   refreshWallet();
+  buildBetControls('ai');
+  buildBetControls('mp');
+  buildDepositPresets();
   setMute(Sound.isMuted());
-  // try to populate the repo link to the user's gh repo if possible (best effort)
-  // Final URL is set after deploy — kept generic in markup.
+  toggleSound.checked = !Sound.isMuted();
+  togglePing.checked = showPing;
+  applyPingVisibility();
 
-  // -- wallet UI --
+  // -- helpers --
+  function showToast(msg, kind = '') {
+    toast.textContent = msg;
+    toast.className = 'toast ' + kind;
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.add('hidden'), 2200);
+  }
+  function openModal(id) { $(id).classList.remove('hidden'); }
+  function closeModal(id) { $(id).classList.add('hidden'); }
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
+
+  function fmt(currency, amount) { return Wallet.format(currency, amount); }
+  function sym(currency) { return Wallet.symbol(currency); }
+  function curLabel(c) { return c === 'btc' ? 'BTC' : c === 'xrp' ? 'XRP' : 'CHIPS'; }
+
+  function refreshAccount() {
+    const id = Auth.currentId();
+    const display = id === 'guest' ? 'Guest' : '@' + id;
+    accountName.textContent = display;
+    accountIcon.textContent = (id === 'guest' ? 'G' : id.charAt(0).toUpperCase());
+    settingsAccountName.textContent = id === 'guest' ? 'Playing as Guest' : 'Signed in as @' + id;
+    settingsAuthBtn.textContent = id === 'guest' ? 'SIGN IN' : 'SWITCH';
+    settingsLogoutRow.classList.toggle('hidden', id === 'guest');
+  }
+
   function refreshWallet() {
     const w = Wallet.load();
-    walletAmountEl.textContent = w.balance.toLocaleString();
+    walletAmountEl.textContent = fmt(activeCurrency, w[activeCurrency]);
+    walletSymbolEl.textContent = sym(activeCurrency);
+    walletLabelEl.textContent = curLabel(activeCurrency);
     statWins.textContent = w.wins;
     statLosses.textContent = w.losses;
     statStreak.textContent = (w.streak >= 0 ? '+' : '') + w.streak;
-    statBiggest.textContent = w.biggestWin.toLocaleString();
+    statBiggest.textContent = Math.round(w.biggestWinChips).toLocaleString();
+    walletChips.textContent = fmt('chips', w.chips);
+    walletBtc.textContent = fmt('btc', w.btc);
+    walletXrp.textContent = fmt('xrp', w.xrp);
+    btcInChips.textContent = Math.round(Wallet.inChips('btc', w.btc)).toLocaleString();
+    xrpInChips.textContent = Math.round(Wallet.inChips('xrp', w.xrp)).toLocaleString();
     syncBetAvailability();
   }
   function syncBetAvailability() {
     const w = Wallet.load();
-    document.querySelectorAll('.chip-btn').forEach(btn => {
-      const v = parseInt(btn.dataset.bet, 10);
-      btn.disabled = v > w.balance;
+    document.querySelectorAll('#aiBetControls .chip-btn').forEach(btn => {
+      const v = parseFloat(btn.dataset.bet);
+      btn.disabled = v > (w[activeCurrency] || 0);
     });
-    playAiBtn.disabled = aiBet > w.balance;
-    hostBtn.disabled = mpBet > w.balance;
-    joinBtn.disabled = mpBet > w.balance;
+    document.querySelectorAll('#mpBetControls .chip-btn').forEach(btn => {
+      const v = parseFloat(btn.dataset.bet);
+      btn.disabled = v > (w[activeCurrency] || 0);
+    });
+    playAiBtn.disabled = aiBet > (w[activeCurrency] || 0);
+    hostBtn.disabled = mpBet > (w[activeCurrency] || 0);
+    joinBtn.disabled = mpBet > (w[activeCurrency] || 0);
   }
   function flashWallet() {
     walletAmountEl.classList.remove('flash');
@@ -92,14 +211,52 @@
     walletAmountEl.classList.add('flash');
   }
 
-  resetBtn.addEventListener('click', () => {
-    if (!confirm('Reset wallet to 1,000 chips and clear stats?')) return;
-    Wallet.reset();
-    refreshWallet();
-    showToast('Wallet reset', 'success');
-  });
+  // -- bet controls (per currency) --
+  function buildBetControls(mode) {
+    const el = mode === 'ai' ? aiBetControls : mpBetControls;
+    const presets = PRESETS[activeCurrency];
+    const defaultIdx = mode === 'ai' ? 1 : 2;
+    el.innerHTML = '';
+    presets.forEach((v, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'chip-btn' + (i === defaultIdx ? ' active' : '');
+      btn.dataset.bet = String(v);
+      btn.textContent = formatBetButton(activeCurrency, v);
+      btn.addEventListener('click', () => {
+        el.querySelectorAll('.chip-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (mode === 'ai') aiBet = v; else mpBet = v;
+        Sound.chip();
+        syncBetAvailability();
+      });
+      el.appendChild(btn);
+    });
+    if (mode === 'ai') aiBet = presets[defaultIdx];
+    else mpBet = presets[defaultIdx];
+    (mode === 'ai' ? aiBetCur : mpBetCur).textContent = curLabel(activeCurrency);
+  }
+  function formatBetButton(currency, v) {
+    if (currency === 'btc') return v.toFixed(4);
+    if (currency === 'xrp') return v >= 1000 ? (v/1000).toFixed(0) + 'K' : String(v);
+    return v >= 1000 ? (v/1000).toFixed(0) + 'K' : String(v);
+  }
 
-  // -- difficulty selector --
+  // -- currency picker --
+  currencyTabs.addEventListener('click', e => {
+    const btn = e.target.closest('.cur-tab'); if (!btn) return;
+    setCurrency(btn.dataset.cur);
+  });
+  function setCurrency(cur) {
+    activeCurrency = cur;
+    localStorage.setItem('ns_active_currency', cur);
+    currencyTabs.querySelectorAll('.cur-tab').forEach(b => b.classList.toggle('active', b.dataset.cur === cur));
+    buildBetControls('ai');
+    buildBetControls('mp');
+    refreshWallet();
+    Sound.chip();
+  }
+
+  // -- difficulty --
   diffRow.addEventListener('click', e => {
     const btn = e.target.closest('.diff-btn'); if (!btn) return;
     diffRow.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
@@ -109,45 +266,182 @@
     Sound.click();
   });
 
-  // -- bet selectors --
-  aiBetButtons.forEach(btn => btn.addEventListener('click', () => {
-    aiBetButtons.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    aiBet = parseInt(btn.dataset.bet, 10);
+  // -- account chip / auth modal --
+  accountChip.addEventListener('click', () => openAuthModal('login'));
+  function openAuthModal(mode = 'login') {
+    authMode = mode;
+    authTabs.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('active', t.dataset.auth === mode));
+    authSubmit.textContent = mode === 'login' ? 'LOG IN' : 'SIGN UP';
+    authPass.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+    authHint.textContent = '';
+    authHint.className = 'modal-hint';
+    openModal('authModal');
+    setTimeout(() => authUser.focus(), 50);
+  }
+  authTabs.addEventListener('click', e => {
+    const t = e.target.closest('.auth-tab'); if (!t) return;
+    authMode = t.dataset.auth;
+    authTabs.querySelectorAll('.auth-tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    authSubmit.textContent = authMode === 'login' ? 'LOG IN' : 'SIGN UP';
+    authHint.textContent = '';
+    authHint.className = 'modal-hint';
+  });
+  authForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    authSubmit.disabled = true;
+    authHint.textContent = '';
+    const u = authUser.value;
+    const p = authPass.value;
+    const fn = authMode === 'login' ? Auth.login : Auth.signup;
+    const r = await fn(u, p);
+    authSubmit.disabled = false;
+    if (!r.ok) {
+      authHint.textContent = r.error;
+      authHint.className = 'modal-hint error';
+      return;
+    }
+    authHint.textContent = (authMode === 'login' ? 'Welcome back, @' : 'Account created, @') + r.username;
+    authHint.className = 'modal-hint success';
+    closeModal('authModal');
+    refreshAccount();
+    refreshWallet();
+    showToast('Signed in as @' + r.username, 'success');
+  });
+
+  // -- settings --
+  settingsBtn.addEventListener('click', () => openModal('settingsModal'));
+  settingsAuthBtn.addEventListener('click', () => { closeModal('settingsModal'); openAuthModal('login'); });
+  settingsLogoutBtn.addEventListener('click', () => {
+    Auth.logout();
+    refreshAccount();
+    refreshWallet();
+    showToast('Logged out', 'success');
+  });
+  togglePing.addEventListener('change', () => {
+    showPing = togglePing.checked;
+    localStorage.setItem('ns_show_ping', showPing ? '1' : '0');
+    applyPingVisibility();
+  });
+  toggleSound.addEventListener('change', () => {
+    if (toggleSound.checked && Sound.isMuted()) Sound.toggle();
+    if (!toggleSound.checked && !Sound.isMuted()) Sound.toggle();
+    setMute(Sound.isMuted());
+  });
+  settingsResetBtn.addEventListener('click', () => {
+    if (!confirm('Reset balances and stats for the current account?')) return;
+    Wallet.reset();
+    refreshWallet();
+    showToast('Account reset', 'success');
+  });
+
+  function applyPingVisibility() {
+    const live = !!(currentMatch && currentMatch.kind === 'mp');
+    pingPill.classList.toggle('hidden', !(showPing && live));
+  }
+
+  // -- wallet modal --
+  walletPillEl.addEventListener('click', () => {
+    if (Wallet.topUpIfBroke()) showToast('Free top-up: 100 chips', 'success');
+    refreshWallet();
+    openModal('walletModal');
+  });
+  resetBtn.addEventListener('click', () => {
+    if (!confirm('Reset balances and stats for the current account?')) return;
+    Wallet.reset();
+    refreshWallet();
+    showToast('Account reset', 'success');
+  });
+
+  // -- deposit modal --
+  depositOpenBtn.addEventListener('click', () => openDeposit(activeCurrency));
+  depositOpenBtn2.addEventListener('click', () => openDeposit(activeCurrency));
+  function openDeposit(cur) {
+    closeModal('walletModal');
+    setDepositCur(cur);
+    refreshFaucet();
+    openModal('depositModal');
+  }
+  depositTabs.addEventListener('click', e => {
+    const t = e.target.closest('.dep-tab'); if (!t) return;
+    setDepositCur(t.dataset.cur);
+  });
+  function setDepositCur(cur) {
+    depositCur = cur;
+    depositTabs.querySelectorAll('.dep-tab').forEach(b => b.classList.toggle('active', b.dataset.cur === cur));
+    buildDepositPresets();
+    refreshFaucet();
+  }
+  function buildDepositPresets() {
+    depositPresets.innerHTML = '';
+    const arr = DEPOSIT_PRESETS[depositCur];
+    arr.forEach(v => {
+      const btn = document.createElement('button');
+      btn.className = 'dep-preset';
+      const inChipsEq = Wallet.inChips(depositCur, v);
+      btn.innerHTML = `<span class="dp-amt">${formatBetButton(depositCur, v)} ${sym(depositCur)}</span><span class="dp-sub">≈ ${Math.round(inChipsEq).toLocaleString()} ◎</span>`;
+      btn.addEventListener('click', () => {
+        Wallet.deposit(depositCur, v);
+        refreshWallet();
+        flashWallet();
+        Sound.chip();
+        showToast(`+${formatBetButton(depositCur, v)} ${sym(depositCur)} deposited (demo)`, 'success');
+      });
+      depositPresets.appendChild(btn);
+    });
+  }
+  function refreshFaucet() {
+    const r = Wallet.faucetReady(depositCur);
+    if (r.ready) {
+      faucetBtn.disabled = false;
+      faucetBtn.textContent = `CLAIM ${formatBetButton(depositCur, r.amount)} ${sym(depositCur)}`;
+      faucetHint.textContent = 'One free pull every 6 hours.';
+      faucetHint.className = 'modal-hint';
+    } else {
+      faucetBtn.disabled = true;
+      faucetBtn.textContent = 'COOLDOWN';
+      faucetHint.textContent = 'Next pull in ' + humanizeMs(r.waitMs);
+      faucetHint.className = 'modal-hint';
+    }
+  }
+  function humanizeMs(ms) {
+    const m = Math.floor(ms / 60000);
+    const h = Math.floor(m / 60);
+    if (h >= 1) return `${h}h ${m - h*60}m`;
+    return `${m}m`;
+  }
+  faucetBtn.addEventListener('click', () => {
+    const r = Wallet.claimFaucet(depositCur);
+    if (!r.ok) { showToast('Faucet on cooldown', 'error'); return; }
+    refreshWallet();
+    flashWallet();
     Sound.chip();
-    syncBetAvailability();
-  }));
-  mpBetButtons.forEach(btn => btn.addEventListener('click', () => {
-    mpBetButtons.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    mpBet = parseInt(btn.dataset.bet, 10);
-    Sound.chip();
-    syncBetAvailability();
-  }));
+    showToast(`+${formatBetButton(depositCur, r.amount)} ${sym(depositCur)} from faucet`, 'success');
+    refreshFaucet();
+  });
 
   // -- mp tabs --
   mpTabs.forEach(tab => tab.addEventListener('click', () => {
     mpTabs.forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    mpMode = tab.dataset.mp;
-    mpHostPanel.classList.toggle('hidden', mpMode !== 'host');
-    mpJoinPanel.classList.toggle('hidden', mpMode !== 'join');
+    const m = tab.dataset.mp;
+    mpHostPanel.classList.toggle('hidden', m !== 'host');
+    mpJoinPanel.classList.toggle('hidden', m !== 'join');
     Sound.click();
   }));
 
-  // -- play vs AI --
+  // ===== AI MATCH =====
   playAiBtn.addEventListener('click', () => {
     const w = Wallet.load();
-    if (aiBet > w.balance) { showToast('Not enough chips', 'error'); return; }
-    Wallet.debit(aiBet);
+    if (aiBet > w[activeCurrency]) { showToast('Not enough ' + curLabel(activeCurrency), 'error'); return; }
+    Wallet.debit(activeCurrency, aiBet);
     refreshWallet();
     flashWallet();
-    const payout = Math.round(aiBet * selectedMult);
-    currentMatch = { kind: 'ai', bet: aiBet, payout, diff: selectedDiff };
-    enterGame({ playerName: 'YOU', oppName: `AI · ${selectedDiff.toUpperCase()}`, pot: aiBet + payout, isHost: true });
+    const payout = roundForCurrency(activeCurrency, aiBet * selectedMult);
+    currentMatch = { kind: 'ai', currency: activeCurrency, bet: aiBet, payout, diff: selectedDiff };
+    enterGame({ playerName: displayName(), oppName: `AI · ${selectedDiff.toUpperCase()}`, pot: aiBet + payout, isHost: true });
     Game.start({
       target: 7,
-      mirror: false,
       onGoal: who => onGoal(who),
       onWin: who => onWin(who),
       onPaddleHit: power => Sound.paddleHit(power),
@@ -155,24 +449,28 @@
     });
     countdown(() => AI.start(selectedDiff));
   });
+  function roundForCurrency(c, n) {
+    if (c === 'btc') return Math.round(n * 1e8) / 1e8;
+    return Math.round(n * 100) / 100;
+  }
 
-  // -- host MP --
+  // ===== MULTIPLAYER =====
   hostBtn.addEventListener('click', () => {
     const w = Wallet.load();
-    if (mpBet > w.balance) { showToast('Not enough chips', 'error'); return; }
+    if (mpBet > w[activeCurrency]) { showToast('Not enough ' + curLabel(activeCurrency), 'error'); return; }
     hostBtn.disabled = true;
     hostBtn.textContent = 'STARTING…';
     roomHint.classList.remove('error', 'success');
     roomHint.textContent = 'Connecting to broker…';
     const code = Multiplayer.host({
       onConnect: () => {
-        // opponent joined — initiate handshake & deduct chips for both
-        Multiplayer.send({ type: 'hello', name: 'PLAYER 1', bet: mpBet });
+        Multiplayer.send({ type: 'hello', v: 2, name: displayName(), bet: mpBet, currency: activeCurrency });
         roomHint.classList.add('success');
-        roomHint.textContent = 'Opponent connected — starting…';
+        roomHint.textContent = 'Opponent connected — handshaking…';
       },
       onMessage: msg => handleMpMessage(msg, true),
       onClose: () => {
+        if (currentMatch && currentMatch.ended) return;
         showToast('Opponent disconnected', 'error');
         leaveMatch();
       },
@@ -190,115 +488,103 @@
   });
 
   copyBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(roomCode.textContent);
-      showToast('Room code copied', 'success');
-    } catch {
-      // fallback: select
-      const range = document.createRange();
-      range.selectNode(roomCode);
-      window.getSelection().removeAllRanges();
-      window.getSelection().addRange(range);
-    }
+    try { await navigator.clipboard.writeText(roomCode.textContent); showToast('Room code copied', 'success'); }
+    catch {}
   });
 
-  // -- join MP --
   joinBtn.addEventListener('click', () => {
     const code = (joinCodeInput.value || '').trim().toUpperCase();
     if (!code) { joinHint.textContent = 'Enter a code'; joinHint.classList.add('error'); return; }
     const w = Wallet.load();
-    if (mpBet > w.balance) { showToast('Not enough chips', 'error'); return; }
+    if (mpBet > w[activeCurrency]) { showToast('Not enough ' + curLabel(activeCurrency), 'error'); return; }
     joinBtn.disabled = true;
     joinBtn.textContent = 'CONNECTING…';
     joinHint.classList.remove('error', 'success');
     joinHint.textContent = 'Connecting…';
     Multiplayer.join(code, {
       onConnect: () => {
-        Multiplayer.send({ type: 'hello', name: 'PLAYER 2', bet: mpBet });
+        Multiplayer.send({ type: 'hello', v: 2, name: displayName(), bet: mpBet, currency: activeCurrency });
         joinHint.classList.add('success');
         joinHint.textContent = 'Connected — waiting for host…';
       },
       onMessage: msg => handleMpMessage(msg, false),
       onClose: () => {
+        if (currentMatch && currentMatch.ended) return;
         showToast('Disconnected', 'error');
         leaveMatch();
-        joinBtn.disabled = false;
-        joinBtn.textContent = 'JOIN ROOM';
+        joinBtn.disabled = false; joinBtn.textContent = 'JOIN ROOM';
       },
       onError: err => {
         joinHint.classList.add('error');
         joinHint.textContent = 'Error: ' + (err && err.type ? err.type : 'connection failed');
-        joinBtn.disabled = false;
-        joinBtn.textContent = 'JOIN ROOM';
+        joinBtn.disabled = false; joinBtn.textContent = 'JOIN ROOM';
       },
     });
   });
-
   joinCodeInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !joinBtn.disabled) joinBtn.click();
   });
 
-  // -- multiplayer message handler --
-  let mpHelloPeer = null;
   function handleMpMessage(msg, asHost) {
     if (!msg || !msg.type) return;
     switch (msg.type) {
       case 'hello': {
         mpHelloPeer = msg;
-        if (asHost) {
-          // both players have committed their wager; deduct now and start
-          const localBet = mpBet;
-          const remoteBet = msg.bet;
-          const wager = Math.min(localBet, remoteBet);  // settle on smaller wager
-          Wallet.debit(wager);
-          refreshWallet();
-          flashWallet();
-          const pot = wager * 2;
-          // Host announces final settings
-          Multiplayer.send({ type: 'ready', target: 7, wager });
-          startMpMatch({ wager, pot, asHost: true, oppName: msg.name || 'PLAYER 2' });
+        if (!asHost) return;
+        // currency must match
+        if ((msg.currency || 'chips') !== activeCurrency) {
+          Multiplayer.send({ type: 'reject', reason: `Currency mismatch — host wants ${curLabel(activeCurrency)}, you have ${curLabel(msg.currency || 'chips')}` });
+          showToast('Currency mismatch with opponent', 'error');
+          leaveMatch();
+          return;
         }
+        const localBet = +mpBet;
+        const remoteBet = +msg.bet;
+        const wager = Math.min(localBet, remoteBet);
+        if (!isFinite(wager) || wager <= 0) {
+          Multiplayer.send({ type: 'reject', reason: 'Invalid wager' });
+          showToast('Invalid wager from opponent', 'error');
+          leaveMatch();
+          return;
+        }
+        Wallet.debit(activeCurrency, wager);
+        refreshWallet(); flashWallet();
+        const pot = wager * 2;
+        Multiplayer.send({ type: 'ready', target: 7, wager, currency: activeCurrency });
+        startMpMatch({ wager, pot, asHost: true, currency: activeCurrency, oppName: msg.name || 'PLAYER 2' });
         break;
       }
       case 'ready': {
         if (asHost) return;
-        const wager = msg.wager;
-        Wallet.debit(wager);
-        refreshWallet();
-        flashWallet();
+        const wager = +msg.wager;
+        const cur = msg.currency || 'chips';
+        if (!isFinite(wager) || wager <= 0) {
+          showToast('Bad ready msg', 'error'); leaveMatch(); return;
+        }
+        if (cur !== activeCurrency) {
+          showToast('Currency mismatch', 'error'); leaveMatch(); return;
+        }
+        Wallet.debit(activeCurrency, wager);
+        refreshWallet(); flashWallet();
         const pot = wager * 2;
-        startMpMatch({ wager, pot, asHost: false, oppName: (mpHelloPeer && mpHelloPeer.name) || 'HOST' });
+        startMpMatch({ wager, pot, asHost: false, currency: activeCurrency, oppName: (mpHelloPeer && mpHelloPeer.name) || 'HOST' });
+        break;
+      }
+      case 'reject': {
+        showToast('Match rejected: ' + (msg.reason || 'unknown'), 'error');
+        leaveMatch();
         break;
       }
       case 'pad': {
-        // received remote paddle position
-        if (asHost) {
-          // for the host, the remote is "p2" from host's POV but appears mirrored on the client.
-          // Convention: the "pad" message is in the *sender's* local coordinates where sender is at bottom.
-          // We translate: sender's bottom = host's top, so flip both axes.
-          const fx = Game.W - msg.x;
-          const fy = Game.H - msg.y;
-          Game.setOpponentTarget(fx, fy);
-        } else {
-          // client: "p2" from msg sender (host) is host's local p1. Likewise flip.
-          // The host actually sends 'state' for authoritative; client relies on that.
-          // Ignored in client mode.
-        }
+        if (!asHost) return;
+        Game.setOpponentTarget(Game.W - msg.x, Game.H - msg.y);
         break;
       }
       case 'state': {
-        // client renders host's authoritative snapshot
         if (asHost) return;
-        // Convert to client's mirrored frame: host's p1 is client's opponent (p2), host's p2 is client's local (p1).
-        // But client's local paddle is controlled locally (via pointer); to avoid jitter we ignore p2 in state.
         const s = msg;
-        // opponent (host's p1) -> client p2 with full mirror flip
-        const oppX = Game.W - s.p1.x;
-        const oppY = Game.H - s.p1.y;
-        Game.setOpponentTarget(oppX, oppY);
-        // puck — flip
+        Game.setOpponentTarget(Game.W - s.p1.x, Game.H - s.p1.y);
         Game.setPuck(Game.W - s.puck.x, Game.H - s.puck.y, -s.puck.vx, -s.puck.vy);
-        // score — swap (host's p1 score is client's opponent score)
         Game.setScore(s.score.p2, s.score.p1);
         scoreP1.textContent = Game.state.score.p1;
         scoreP2.textContent = Game.state.score.p2;
@@ -306,7 +592,6 @@
       }
       case 'goal': {
         if (asHost) return;
-        // who is in host's frame; flip for client
         const who = msg.who === 'p1' ? 'p2' : 'p1';
         Sound.goal();
         triggerGoalFx(who);
@@ -329,20 +614,15 @@
     }
   }
 
-  function startMpMatch({ wager, pot, asHost, oppName }) {
-    currentMatch = { kind: 'mp', bet: wager, payout: pot, isHost: asHost };
-    enterGame({
-      playerName: asHost ? 'HOST' : 'YOU',
-      oppName,
-      pot,
-      isHost: asHost,
-    });
+  function startMpMatch({ wager, pot, asHost, currency, oppName }) {
+    currentMatch = { kind: 'mp', currency, bet: wager, payout: pot, isHost: asHost, ended: false };
+    enterGame({ playerName: displayName(), oppName, pot, isHost: asHost });
     Game.start({
       target: 7,
-      interpOpponent: true,       // both: opponent paddle is updated externally + interpolated
-      clientRender: !asHost,      // client skips physics/scoring, host is authoritative
+      interpOpponent: true,
+      clientRender: !asHost,
       onGoal: who => {
-        if (!asHost) return;      // client uses 'goal' message instead
+        if (!asHost) return;
         Sound.goal();
         triggerGoalFx(who);
         scoreP1.textContent = Game.state.score.p1;
@@ -351,29 +631,24 @@
         setTimeout(() => countdown(() => {}), 300);
       },
       onWin: who => {
-        if (!asHost) return;      // client uses 'win' message instead
+        if (!asHost) return;
         Multiplayer.send({ type: 'win', who });
         onWin(who);
       },
       onPaddleHit: power => Sound.paddleHit(power),
       onWallHit: power => Sound.wallHit(power),
     });
-
-    countdown(() => {
-      // Start streaming loops
-      startNetworkLoops(asHost);
-    });
+    countdown(() => startNetworkLoops(asHost));
+    startPingDisplay();
+    applyPingVisibility();
   }
 
-  let netRaf = 0;
   function startNetworkLoops(asHost) {
     cancelAnimationFrame(netRaf);
     const loop = () => {
       if (!currentMatch || currentMatch.kind !== 'mp') return;
       const now = performance.now();
-
       if (asHost) {
-        // Host sends state at ~30hz
         if (now - lastSnapshot > 33) {
           lastSnapshot = now;
           const s = Game.state;
@@ -387,48 +662,47 @@
           });
         }
       } else {
-        // Client sends paddle pos at ~50hz
         if (now - lastSnapshot > 20) {
           lastSnapshot = now;
           const p1 = Game.state.p1;
-          Multiplayer.send({
-            type: 'pad',
-            x: p1.x, y: p1.y, vx: p1.vx, vy: p1.vy,
-          });
+          Multiplayer.send({ type: 'pad', x: p1.x, y: p1.y, vx: p1.vx, vy: p1.vy });
         }
       }
-
-      // update HUD
       scoreP1.textContent = Game.state.score.p1;
       scoreP2.textContent = Game.state.score.p2;
-      // connection health
       connDot.classList.toggle('bad', !Multiplayer.connected);
-
       netRaf = requestAnimationFrame(loop);
     };
     netRaf = requestAnimationFrame(loop);
   }
 
-  // -- enter game / leave --
+  function startPingDisplay() {
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => {
+      const p = Multiplayer.ping || 0;
+      pingMs.textContent = (p > 0 ? Math.round(p) : '—') + ' ms';
+      pingPill.classList.toggle('warn', p > 100 && p <= 200);
+      pingPill.classList.toggle('bad', p > 200);
+    }, 700);
+  }
+  function stopPingDisplay() { clearInterval(pingTimer); pingTimer = 0; pingMs.textContent = '— ms'; }
+
+  // ===== ENTER / LEAVE =====
   function enterGame({ playerName, oppName, pot, isHost }) {
     lobby.classList.remove('active');
     gameScreen.classList.add('active');
     hudP1.textContent = playerName;
     hudP2.textContent = oppName;
     Game.setNames(playerName, oppName);
-    scoreP1.textContent = 0;
-    scoreP2.textContent = 0;
-    potAmount.textContent = pot.toLocaleString();
+    scoreP1.textContent = 0; scoreP2.textContent = 0;
+    potAmount.textContent = `${fmt(currentMatch.currency, pot)} ${sym(currentMatch.currency)}`;
     matchInfo.textContent = 'FIRST TO 7';
     connDot.classList.toggle('bad', currentMatch?.kind === 'mp' && !Multiplayer.connected);
   }
 
   leaveBtn.addEventListener('click', () => {
-    if (currentMatch && currentMatch.kind === 'mp') {
-      // forfeit: don't refund
+    if (currentMatch && currentMatch.kind === 'mp' && !currentMatch.ended) {
       Multiplayer.send({ type: 'bye' });
-    } else {
-      // forfeit AI: lose bet (already debited)
     }
     leaveMatch();
   });
@@ -438,30 +712,28 @@
     Game.stop();
     Multiplayer.close();
     cancelAnimationFrame(netRaf);
+    stopPingDisplay();
     currentMatch = null;
     gameScreen.classList.remove('active');
     lobby.classList.add('active');
     resultModal.classList.add('hidden');
-    // reset MP UI
-    hostBtn.disabled = false;
-    hostBtn.textContent = 'CREATE ROOM';
-    joinBtn.disabled = false;
-    joinBtn.textContent = 'JOIN ROOM';
+    hostBtn.disabled = false; hostBtn.textContent = 'CREATE ROOM';
+    joinBtn.disabled = false; joinBtn.textContent = 'JOIN ROOM';
     roomDisplay.classList.add('hidden');
     roomHint.textContent = '';
     joinHint.textContent = '';
     joinCodeInput.value = '';
     if (Wallet.topUpIfBroke()) showToast('Free top-up: 100 chips', 'success');
     refreshWallet();
+    applyPingVisibility();
   }
 
-  // -- goal / win handling --
+  // ===== GOAL / WIN =====
   function onGoal(who) {
     Sound.goal();
     triggerGoalFx(who);
     scoreP1.textContent = Game.state.score.p1;
     scoreP2.textContent = Game.state.score.p2;
-    // small countdown before resume
     setTimeout(() => countdown(() => {}), 300);
   }
   function triggerGoalFx(who) {
@@ -474,15 +746,18 @@
     if (!currentMatch) return;
     AI.stop();
     cancelAnimationFrame(netRaf);
+    currentMatch.ended = true;
     const playerWon = who === 'p1';
     let payout = 0;
     if (playerWon) {
-      payout = currentMatch.payout;
-      Wallet.credit(payout);
-      Wallet.recordResult(true, payout);
+      // Defensive: if payout was somehow 0/missing, fall back to 2x bet
+      payout = +currentMatch.payout;
+      if (!isFinite(payout) || payout <= 0) payout = (+currentMatch.bet || 0) * 2;
+      Wallet.credit(currentMatch.currency, payout);
+      Wallet.recordResult(true, currentMatch.currency, payout);
       Sound.win();
     } else {
-      Wallet.recordResult(false, 0);
+      Wallet.recordResult(false, currentMatch.currency, 0);
       Sound.loss();
     }
     refreshWallet();
@@ -495,10 +770,14 @@
     resultBanner.classList.toggle('loss', !won);
     resultScore.textContent = `${Game.state.score.p1} — ${Game.state.score.p2}`;
     payoutLabel.textContent = won ? 'PAYOUT' : 'LOST';
-    payoutAmount.textContent = won ? `+${payout.toLocaleString()}` : `−${currentMatch.bet.toLocaleString()}`;
+    const cur = currentMatch.currency;
+    payoutAmount.textContent = won
+      ? `+${fmt(cur, payout)} ${sym(cur)}`
+      : `−${fmt(cur, currentMatch.bet)} ${sym(cur)}`;
     payoutAmount.classList.toggle('loss', !won);
     resultModal.classList.remove('hidden');
-    Multiplayer.close();
+    // NOTE: do not close Multiplayer here — it would trigger our own onClose
+    // and immediately hide the modal. The Lobby/Rematch buttons close it.
   }
 
   rematchBtn.addEventListener('click', () => {
@@ -507,10 +786,10 @@
     resultModal.classList.add('hidden');
     if (m.kind === 'ai') {
       const w = Wallet.load();
-      if (m.bet > w.balance) { showToast('Not enough chips', 'error'); leaveMatch(); return; }
-      Wallet.debit(m.bet);
+      if (m.bet > w[m.currency]) { showToast('Not enough', 'error'); leaveMatch(); return; }
+      Wallet.debit(m.currency, m.bet);
       refreshWallet();
-      currentMatch = { ...m };
+      currentMatch = { ...m, ended: false };
       Game.reset();
       scoreP1.textContent = 0; scoreP2.textContent = 0;
       Game.start({
@@ -522,7 +801,7 @@
       });
       countdown(() => AI.start(m.diff));
     } else {
-      // MP rematch needs full re-handshake (peer connection closed).
+      // MP rematch needs full re-handshake (peer connection closed). Return to lobby.
       leaveMatch();
     }
   });
@@ -550,32 +829,21 @@
     tick();
   }
 
-  // -- toast --
-  let toastTimer = 0;
-  function showToast(msg, kind = '') {
-    toast.textContent = msg;
-    toast.className = 'toast ' + kind;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.add('hidden'), 2200);
-  }
-
   // -- mute --
   muteBtn.addEventListener('click', () => setMute(Sound.toggle()));
   function setMute(m) {
     muteBtn.classList.toggle('muted', m);
     muteBtn.title = m ? 'Sound off' : 'Sound on';
+    toggleSound.checked = !m;
   }
 
-  // -- wallet pill: small bonus on click if broke --
-  walletPillEl.addEventListener('click', () => {
-    if (Wallet.topUpIfBroke()) { showToast('Free top-up: 100 chips', 'success'); refreshWallet(); flashWallet(); }
-  });
+  // -- helpers --
+  function displayName() {
+    const id = Auth.currentId();
+    if (id === 'guest') return 'YOU';
+    return '@' + id;
+  }
 
-  // -- prevent context menu on canvas (right click) --
+  // prevent context menu on canvas
   board.addEventListener('contextmenu', e => e.preventDefault());
-
-  // -- keep canvas displayed at the right size --
-  window.addEventListener('resize', () => {
-    // Game listens internally; nothing else needed.
-  });
 })();

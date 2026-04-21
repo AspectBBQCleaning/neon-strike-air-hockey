@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=2" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -24,10 +24,20 @@
         <span class="brand-sub">High-Stakes Air Hockey</span>
       </div>
     </div>
-    <div class="wallet-pill" id="walletPill" title="Your virtual chip balance">
-      <span class="chip-icon">◎</span>
-      <span class="wallet-amount" id="walletAmount">0</span>
-      <span class="wallet-label">CHIPS</span>
+    <div class="topbar-right">
+      <div class="ping-pill hidden" id="pingPill" title="Network round-trip">
+        <span class="ping-dot"></span><span id="pingMs">— ms</span>
+      </div>
+      <button class="account-chip" id="accountChip" title="Account">
+        <span class="account-icon" id="accountIcon">G</span>
+        <span class="account-name" id="accountName">Guest</span>
+      </button>
+      <div class="wallet-pill" id="walletPill" title="Open wallet">
+        <span class="chip-icon" id="walletSymbol">◎</span>
+        <span class="wallet-amount" id="walletAmount">0</span>
+        <span class="wallet-label" id="walletLabel">CHIPS</span>
+      </div>
+      <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
     </div>
   </header>
 
@@ -35,7 +45,17 @@
   <main id="lobby" class="screen active">
     <section class="hero">
       <h1 class="hero-title">PLAY. BET. <span class="accent">WIN.</span></h1>
-      <p class="hero-sub">Real-time air hockey. Smart AI opponents. Live multiplayer over WebRTC. <span class="muted">Demo chips only — no real money.</span></p>
+      <p class="hero-sub">Real-time air hockey. Smart AI opponents. Live multiplayer over WebRTC. <span class="muted">Demo currencies only — no real money.</span></p>
+    </section>
+
+    <section class="currency-strip">
+      <span class="strip-label">CURRENCY</span>
+      <div class="currency-tabs" id="currencyTabs">
+        <button class="cur-tab active" data-cur="chips"><span class="cur-sym">◎</span> CHIPS</button>
+        <button class="cur-tab" data-cur="btc"><span class="cur-sym">₿</span> BITCOIN</button>
+        <button class="cur-tab" data-cur="xrp"><span class="cur-sym">X</span> RIPPLE</button>
+      </div>
+      <button class="strip-deposit" id="depositOpenBtn">+ DEPOSIT</button>
     </section>
 
     <section class="modes">
@@ -61,14 +81,8 @@
           </button>
         </div>
         <div class="bet-row">
-          <label>BET</label>
-          <div class="bet-controls">
-            <button class="chip-btn" data-bet="10">10</button>
-            <button class="chip-btn active" data-bet="50">50</button>
-            <button class="chip-btn" data-bet="100">100</button>
-            <button class="chip-btn" data-bet="500">500</button>
-            <button class="chip-btn" data-bet="1000">1K</button>
-          </div>
+          <label>BET <span class="bet-cur" id="aiBetCur">CHIPS</span></label>
+          <div class="bet-controls" id="aiBetControls" data-mode="ai"></div>
         </div>
         <button class="cta-btn" id="playAiBtn">PLAY VS AI →</button>
       </article>
@@ -88,13 +102,8 @@
 
         <div class="mp-panel" id="mpHostPanel">
           <div class="bet-row compact">
-            <label>WAGER (each)</label>
-            <div class="bet-controls">
-              <button class="chip-btn mp-bet" data-bet="50">50</button>
-              <button class="chip-btn mp-bet active" data-bet="100">100</button>
-              <button class="chip-btn mp-bet" data-bet="500">500</button>
-              <button class="chip-btn mp-bet" data-bet="1000">1K</button>
-            </div>
+            <label>WAGER (each) <span class="bet-cur" id="mpBetCur">CHIPS</span></label>
+            <div class="bet-controls" id="mpBetControls" data-mode="mp"></div>
           </div>
           <button class="cta-btn ghost" id="hostBtn">CREATE ROOM</button>
           <div class="room-display hidden" id="roomDisplay">
@@ -130,13 +139,12 @@
       </div>
       <div class="stat">
         <span class="stat-num" id="statBiggest">0</span>
-        <span class="stat-label">BIGGEST WIN</span>
+        <span class="stat-label">BIGGEST WIN (≈◎)</span>
       </div>
-      <button class="reset-btn" id="resetBtn" title="Reset wallet to 1000 chips">RESET</button>
     </section>
 
     <footer class="lobby-foot">
-      <span>v1.0 · Vanilla JS · WebRTC P2P · <a href="https://github.com/AspectBBQCleaning/neon-strike-air-hockey" id="repoLink" target="_blank" rel="noopener">View source</a></span>
+      <span>v1.2 · Vanilla JS · WebRTC P2P · <a href="https://github.com/AspectBBQCleaning/neon-strike-air-hockey" target="_blank" rel="noopener">View source</a></span>
       <span class="disclaimer">For entertainment only. No real-money gambling.</span>
     </footer>
   </main>
@@ -193,16 +201,124 @@
     </div>
   </div>
 
+  <!-- WALLET MODAL -->
+  <div id="walletModal" class="modal hidden">
+    <div class="modal-card wide">
+      <button class="modal-close" data-close="walletModal" aria-label="Close">×</button>
+      <h3 class="modal-title">WALLET</h3>
+      <div class="wallet-rows">
+        <div class="wallet-row" data-cur="chips">
+          <div class="wr-icon">◎</div>
+          <div class="wr-meta"><span class="wr-name">CHIPS</span><span class="wr-sub">Demo currency</span></div>
+          <div class="wr-amount" id="walletChips">0</div>
+        </div>
+        <div class="wallet-row" data-cur="btc">
+          <div class="wr-icon">₿</div>
+          <div class="wr-meta"><span class="wr-name">BITCOIN</span><span class="wr-sub">≈ <span id="btcInChips">0</span> ◎</span></div>
+          <div class="wr-amount" id="walletBtc">0.00000</div>
+        </div>
+        <div class="wallet-row" data-cur="xrp">
+          <div class="wr-icon">X</div>
+          <div class="wr-meta"><span class="wr-name">RIPPLE (XRP)</span><span class="wr-sub">≈ <span id="xrpInChips">0</span> ◎</span></div>
+          <div class="wr-amount" id="walletXrp">0</div>
+        </div>
+      </div>
+      <div class="wallet-actions">
+        <button class="cta-btn ghost" id="depositOpenBtn2">+ DEPOSIT (DEMO)</button>
+        <button class="reset-btn" id="resetBtn" title="Reset all balances and stats">RESET ACCOUNT</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEPOSIT MODAL -->
+  <div id="depositModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" data-close="depositModal" aria-label="Close">×</button>
+      <h3 class="modal-title">DEPOSIT (DEMO)</h3>
+      <p class="modal-sub">Pretend-deposit any amount. No real wallet, no real money — pure demo.</p>
+      <div class="deposit-tabs" id="depositTabs">
+        <button class="dep-tab active" data-cur="chips"><span class="cur-sym">◎</span> CHIPS</button>
+        <button class="dep-tab" data-cur="btc"><span class="cur-sym">₿</span> BTC</button>
+        <button class="dep-tab" data-cur="xrp"><span class="cur-sym">X</span> XRP</button>
+      </div>
+      <div class="deposit-presets" id="depositPresets"></div>
+      <div class="deposit-divider"><span>OR FREE FAUCET</span></div>
+      <button class="cta-btn ghost" id="faucetBtn">CLAIM FAUCET</button>
+      <p class="modal-hint" id="faucetHint"></p>
+    </div>
+  </div>
+
+  <!-- AUTH MODAL -->
+  <div id="authModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" data-close="authModal" aria-label="Close">×</button>
+      <div class="auth-tabs" id="authTabs">
+        <button class="auth-tab active" data-auth="login">LOG IN</button>
+        <button class="auth-tab" data-auth="signup">SIGN UP</button>
+      </div>
+      <form id="authForm" class="auth-form" autocomplete="off">
+        <input type="text" id="authUser" class="text-input" placeholder="USERNAME" maxlength="24" autocomplete="username" />
+        <input type="password" id="authPass" class="text-input" placeholder="PASSWORD" autocomplete="current-password" />
+        <button type="submit" class="cta-btn" id="authSubmit">LOG IN</button>
+        <p class="modal-hint" id="authHint"></p>
+        <p class="modal-tiny">Local accounts only — stored in your browser, no server. Each account has its own wallet & stats.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" data-close="settingsModal" aria-label="Close">×</button>
+      <h3 class="modal-title">SETTINGS</h3>
+
+      <div class="setting-section">
+        <span class="setting-label">ACCOUNT</span>
+        <div class="setting-row">
+          <span id="settingsAccountName">Playing as Guest</span>
+          <button class="ctrl-btn" id="settingsAuthBtn">SIGN IN</button>
+        </div>
+        <div class="setting-row hidden" id="settingsLogoutRow">
+          <span class="setting-sub">Switch to guest mode</span>
+          <button class="ctrl-btn" id="settingsLogoutBtn">LOG OUT</button>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <span class="setting-label">DISPLAY</span>
+        <label class="toggle-row">
+          <span>Show ping in top bar</span>
+          <input type="checkbox" id="togglePing" />
+          <span class="toggle-sw"></span>
+        </label>
+        <label class="toggle-row">
+          <span>Sound effects</span>
+          <input type="checkbox" id="toggleSound" />
+          <span class="toggle-sw"></span>
+        </label>
+      </div>
+
+      <div class="setting-section">
+        <span class="setting-label">DATA</span>
+        <div class="setting-row">
+          <span class="setting-sub">Reset balances + stats for current account</span>
+          <button class="ctrl-btn" id="settingsResetBtn">RESET</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
 
   <!-- PeerJS for WebRTC multiplayer (free public broker) -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="js/sound.js"></script>
-  <script src="js/wallet.js"></script>
-  <script src="js/game.js"></script>
-  <script src="js/ai.js"></script>
-  <script src="js/multiplayer.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/sound.js?v=2"></script>
+  <script src="js/auth.js?v=2"></script>
+  <script src="js/wallet.js?v=2"></script>
+  <script src="js/game.js?v=2"></script>
+  <script src="js/ai.js?v=2"></script>
+  <script src="js/multiplayer.js?v=2"></script>
+  <script src="js/main.js?v=2"></script>
 </body>
 </html>
