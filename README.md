@@ -2,7 +2,7 @@
 
 Real-time browser air hockey with a casino aesthetic. Play vs an AI on three difficulties, or invite a friend anywhere in the world for a peer-to-peer WebRTC match. Virtual chips only — no real-money gambling.
 
-**Live demo:** see GitHub Pages link in the repo settings.
+**Live demo:** https://aspectbbqcleaning.github.io/neon-strike-air-hockey/
 
 ## Features
 
