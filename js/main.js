@@ -459,10 +459,20 @@
     const w = Wallet.load();
     if (mpBet > w[activeCurrency]) { showToast('Not enough ' + curLabel(activeCurrency), 'error'); return; }
     hostBtn.disabled = true;
-    hostBtn.textContent = 'STARTING…';
+    hostBtn.textContent = 'CONNECTING…';
+    roomDisplay.classList.add('hidden');
+    roomCode.textContent = '———';
     roomHint.classList.remove('error', 'success');
-    roomHint.textContent = 'Connecting to broker…';
-    const code = Multiplayer.host({
+    roomHint.textContent = 'Registering with broker…';
+    Multiplayer.host({
+      onReady: id => {
+        // ID is now live on the broker — safe to share
+        roomCode.textContent = id;
+        roomDisplay.classList.remove('hidden');
+        roomHint.classList.remove('error', 'success');
+        roomHint.textContent = 'Share this code with a friend…';
+        hostBtn.textContent = 'WAITING FOR FRIEND…';
+      },
       onConnect: () => {
         Multiplayer.send({ type: 'hello', v: 2, name: displayName(), bet: mpBet, currency: activeCurrency });
         roomHint.classList.add('success');
@@ -481,10 +491,6 @@
         hostBtn.textContent = 'CREATE ROOM';
       },
     });
-    roomCode.textContent = code;
-    roomDisplay.classList.remove('hidden');
-    roomHint.classList.remove('error');
-    roomHint.textContent = 'Share this code with a friend…';
   });
 
   copyBtn.addEventListener('click', async () => {
@@ -502,6 +508,10 @@
     joinHint.classList.remove('error', 'success');
     joinHint.textContent = 'Connecting…';
     Multiplayer.join(code, {
+      onStatus: txt => {
+        joinHint.classList.remove('error', 'success');
+        joinHint.textContent = txt;
+      },
       onConnect: () => {
         Multiplayer.send({ type: 'hello', v: 2, name: displayName(), bet: mpBet, currency: activeCurrency });
         joinHint.classList.add('success');
@@ -516,7 +526,11 @@
       },
       onError: err => {
         joinHint.classList.add('error');
-        joinHint.textContent = 'Error: ' + (err && err.type ? err.type : 'connection failed');
+        const msg = err && err.message ? err.message
+                  : err && err.type === 'peer-unavailable' ? 'Room not found — double-check the code'
+                  : err && err.type ? 'Error: ' + err.type
+                  : 'Connection failed';
+        joinHint.textContent = msg;
         joinBtn.disabled = false; joinBtn.textContent = 'JOIN ROOM';
       },
     });
