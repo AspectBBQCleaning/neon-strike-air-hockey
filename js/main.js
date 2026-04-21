@@ -439,7 +439,7 @@
     flashWallet();
     const payout = roundForCurrency(activeCurrency, aiBet * selectedMult);
     currentMatch = { kind: 'ai', currency: activeCurrency, bet: aiBet, payout, diff: selectedDiff };
-    enterGame({ playerName: displayName(), oppName: `AI · ${selectedDiff.toUpperCase()}`, pot: aiBet + payout, isHost: true });
+    enterGame({ playerName: 'YOU', oppName: `AI · ${selectedDiff.toUpperCase()}`, pot: aiBet + payout, isHost: true });
     Game.start({
       target: 7,
       onGoal: who => onGoal(who),
@@ -531,27 +531,22 @@
       case 'hello': {
         mpHelloPeer = msg;
         if (!asHost) return;
-        // currency must match
-        if ((msg.currency || 'chips') !== activeCurrency) {
-          Multiplayer.send({ type: 'reject', reason: `Currency mismatch — host wants ${curLabel(activeCurrency)}, you have ${curLabel(msg.currency || 'chips')}` });
-          showToast('Currency mismatch with opponent', 'error');
-          leaveMatch();
-          return;
-        }
-        const localBet = +mpBet;
-        const remoteBet = +msg.bet;
-        const wager = Math.min(localBet, remoteBet);
+        // Host's currency wins for the match. We use our own wager;
+        // joiner adapts (or rejects if they can't afford it).
+        const wager = +mpBet;
         if (!isFinite(wager) || wager <= 0) {
-          Multiplayer.send({ type: 'reject', reason: 'Invalid wager' });
-          showToast('Invalid wager from opponent', 'error');
-          leaveMatch();
+          softReject('Host has invalid wager'); return;
+        }
+        const w = Wallet.load();
+        if ((+w[activeCurrency] || 0) < wager) {
+          softReject(`Host needs ${fmt(activeCurrency, wager)} ${sym(activeCurrency)} but doesn't have it`);
           return;
         }
         Wallet.debit(activeCurrency, wager);
         refreshWallet(); flashWallet();
         const pot = wager * 2;
-        Multiplayer.send({ type: 'ready', target: 7, wager, currency: activeCurrency });
-        startMpMatch({ wager, pot, asHost: true, currency: activeCurrency, oppName: msg.name || 'PLAYER 2' });
+        Multiplayer.send({ type: 'ready', v: 2, target: 7, wager, currency: activeCurrency });
+        startMpMatch({ wager, pot, asHost: true, currency: activeCurrency, oppName: msg.name || 'OPPONENT' });
         break;
       }
       case 'ready': {
@@ -559,20 +554,29 @@
         const wager = +msg.wager;
         const cur = msg.currency || 'chips';
         if (!isFinite(wager) || wager <= 0) {
-          showToast('Bad ready msg', 'error'); leaveMatch(); return;
+          softReject('Host sent invalid wager'); return;
         }
+        const w = Wallet.load();
+        const have = +w[cur] || 0;
+        if (have < wager) {
+          softReject(`You need ${fmt(cur, wager)} ${sym(cur)} but only have ${fmt(cur, have)}. Open Wallet → Deposit (or pick a different currency) and rejoin.`);
+          return;
+        }
+        // Adopt host's currency if we were on a different one
         if (cur !== activeCurrency) {
-          showToast('Currency mismatch', 'error'); leaveMatch(); return;
+          setCurrency(cur);
+          showToast(`Match is in ${curLabel(cur)} — switched`, '');
         }
-        Wallet.debit(activeCurrency, wager);
+        Wallet.debit(cur, wager);
         refreshWallet(); flashWallet();
         const pot = wager * 2;
-        startMpMatch({ wager, pot, asHost: false, currency: activeCurrency, oppName: (mpHelloPeer && mpHelloPeer.name) || 'HOST' });
+        startMpMatch({ wager, pot, asHost: false, currency: cur, oppName: (mpHelloPeer && mpHelloPeer.name) || 'HOST' });
         break;
       }
       case 'reject': {
         showToast('Match rejected: ' + (msg.reason || 'unknown'), 'error');
-        leaveMatch();
+        // Give the toast a moment to be readable before tearing down
+        setTimeout(() => leaveMatch(), 100);
         break;
       }
       case 'pad': {
@@ -616,7 +620,7 @@
 
   function startMpMatch({ wager, pot, asHost, currency, oppName }) {
     currentMatch = { kind: 'mp', currency, bet: wager, payout: pot, isHost: asHost, ended: false };
-    enterGame({ playerName: displayName(), oppName, pot, isHost: asHost });
+    enterGame({ playerName: 'YOU', oppName, pot, isHost: asHost });
     Game.start({
       target: 7,
       interpOpponent: true,
@@ -839,9 +843,15 @@
 
   // -- helpers --
   function displayName() {
+    // Used as the network-visible name (what your friend sees as their opponent)
     const id = Auth.currentId();
-    if (id === 'guest') return 'YOU';
+    if (id === 'guest') return 'GUEST';
     return '@' + id;
+  }
+  function softReject(reason) {
+    try { Multiplayer.send({ type: 'reject', reason }); } catch {}
+    showToast(reason, 'error');
+    setTimeout(() => leaveMatch(), 200);
   }
 
   // prevent context menu on canvas
