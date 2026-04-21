@@ -80,14 +80,14 @@ const Game = (() => {
     state.p2.vx = 0; state.p2.vy = 0;
   }
 
-  function start({ target = 7, mirror = false, onGoal, onWin, onPaddleHit, onWallHit, interpOpponent = false } = {}) {
+  function start({ target = 7, onGoal, onWin, onPaddleHit, onWallHit, interpOpponent = false, clientRender = false } = {}) {
     state.target = target;
-    state.mirror = mirror;
     state.onGoal = onGoal;
     state.onWin = onWin;
     state.onPaddleHit = onPaddleHit;
     state.onWallHit = onWallHit;
     state.interpOpponent = interpOpponent;
+    state.clientRender = clientRender;
     reset();
     state.running = true;
     state.paused = false;
@@ -104,13 +104,8 @@ const Game = (() => {
   function attachInput() {
     const localCoords = (clientX, clientY) => {
       const r = canvas.getBoundingClientRect();
-      let x = (clientX - r.left) / r.width  * W;
-      let y = (clientY - r.top)  / r.height * H;
-      // when mirrored, screen-bottom is logical-top, so flip y
-      if (state.mirror) {
-        x = W - x;
-        y = H - y;
-      }
+      const x = (clientX - r.left) / r.width  * W;
+      const y = (clientY - r.top)  / r.height * H;
       return { x, y };
     };
 
@@ -177,10 +172,25 @@ const Game = (() => {
       constrainPaddle(p2, /*bottom*/ false);
     }
 
-    // 3. integrate puck
+    // 3. integrate puck (client just extrapolates between snapshots; host is authoritative)
     const puck = state.puck;
     puck.x += puck.vx;
     puck.y += puck.vy;
+
+    if (state.clientRender) {
+      // client doesn't run physics or scoring — only renders extrapolated puck + particles
+      state.puckTrail.unshift({ x: puck.x, y: puck.y });
+      if (state.puckTrail.length > 14) state.puckTrail.length = 14;
+      for (let i = state.particles.length - 1; i >= 0; i--) {
+        const p = state.particles[i];
+        p.x += p.vx; p.y += p.vy;
+        p.vx *= 0.96; p.vy *= 0.96;
+        p.life -= 1;
+        if (p.life <= 0) state.particles.splice(i, 1);
+      }
+      return;
+    }
+
     puck.vx *= PUCK_FRICTION;
     puck.vy *= PUCK_FRICTION;
 
@@ -203,36 +213,46 @@ const Game = (() => {
       if (Math.abs(puck.vx) > MIN_PUCK_BOUNCE_SPEED) state.onWallHit?.(Math.abs(puck.vx));
     }
 
-    // top wall (or goal)
-    if (puck.y - PUCK_R < 0) {
+    // top wall / goal
+    {
       const inGoal = puck.x > (W - GOAL_W) / 2 && puck.x < (W + GOAL_W) / 2;
-      if (inGoal && puck.y < -PUCK_R * 0.5) {
-        // P1 scores
-        state.score.p1++;
-        spawnGoalParticles(puck.x, 0, '#00f0ff');
-        state.onGoal?.('p1');
-        if (state.score.p1 >= state.target) { state.running = false; state.onWin?.('p1'); return; }
-        centerPuck(+1);
-        return;
-      } else {
+      if (puck.y < -PUCK_R) {
+        // puck fully past the goal line
+        if (inGoal) {
+          state.score.p1++;
+          spawnGoalParticles(puck.x, 0, '#00f0ff');
+          state.onGoal?.('p1');
+          if (state.score.p1 >= state.target) { state.running = false; state.onWin?.('p1'); return; }
+          centerPuck(+1);
+          return;
+        }
+        // safety: outside goal, snap back
+        puck.y = PUCK_R;
+        puck.vy = Math.abs(puck.vy) * PUCK_RESTITUTION;
+      } else if (!inGoal && puck.y - PUCK_R < 0) {
+        // hit top wall outside goal mouth
         puck.y = PUCK_R;
         puck.vy = -puck.vy * PUCK_RESTITUTION;
         if (Math.abs(puck.vy) > MIN_PUCK_BOUNCE_SPEED) state.onWallHit?.(Math.abs(puck.vy));
       }
+      // if inGoal and puck.y still inside table, let it travel through unobstructed
     }
 
-    // bottom wall (or goal)
-    if (puck.y + PUCK_R > H) {
+    // bottom wall / goal
+    {
       const inGoal = puck.x > (W - GOAL_W) / 2 && puck.x < (W + GOAL_W) / 2;
-      if (inGoal && puck.y > H + PUCK_R * 0.5) {
-        // P2 scores
-        state.score.p2++;
-        spawnGoalParticles(puck.x, H, '#ff2bd6');
-        state.onGoal?.('p2');
-        if (state.score.p2 >= state.target) { state.running = false; state.onWin?.('p2'); return; }
-        centerPuck(-1);
-        return;
-      } else {
+      if (puck.y > H + PUCK_R) {
+        if (inGoal) {
+          state.score.p2++;
+          spawnGoalParticles(puck.x, H, '#ff2bd6');
+          state.onGoal?.('p2');
+          if (state.score.p2 >= state.target) { state.running = false; state.onWin?.('p2'); return; }
+          centerPuck(-1);
+          return;
+        }
+        puck.y = H - PUCK_R;
+        puck.vy = -Math.abs(puck.vy) * PUCK_RESTITUTION;
+      } else if (!inGoal && puck.y + PUCK_R > H) {
         puck.y = H - PUCK_R;
         puck.vy = -puck.vy * PUCK_RESTITUTION;
         if (Math.abs(puck.vy) > MIN_PUCK_BOUNCE_SPEED) state.onWallHit?.(Math.abs(puck.vy));
@@ -315,21 +335,12 @@ const Game = (() => {
 
   // --- rendering ---
   function render() {
-    // mirror transform if needed (so the local player's paddle is at the bottom of the screen)
-    ctx.save();
-    if (state.mirror) {
-      ctx.translate(W, H);
-      ctx.rotate(Math.PI);
-    }
-
     drawTable();
     drawTrail();
     drawParticles();
     drawPaddle(state.p2);
     drawPaddle(state.p1);
     drawPuck();
-
-    ctx.restore();
   }
 
   function drawTable() {

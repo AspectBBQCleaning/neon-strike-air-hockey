@@ -308,7 +308,11 @@
         if (asHost) return;
         // who is in host's frame; flip for client
         const who = msg.who === 'p1' ? 'p2' : 'p1';
+        Sound.goal();
         triggerGoalFx(who);
+        scoreP1.textContent = Game.state.score.p1;
+        scoreP2.textContent = Game.state.score.p2;
+        setTimeout(() => countdown(() => {}), 300);
         break;
       }
       case 'win': {
@@ -335,18 +339,20 @@
     });
     Game.start({
       target: 7,
-      mirror: !asHost,         // client mirrors so they see themselves at bottom
-      interpOpponent: !asHost, // client smooths host updates
+      interpOpponent: true,       // both: opponent paddle is updated externally + interpolated
+      clientRender: !asHost,      // client skips physics/scoring, host is authoritative
       onGoal: who => {
-        if (asHost) {
-          Multiplayer.send({ type: 'goal', who });
-          triggerGoalFx(who);
-        }
+        if (!asHost) return;      // client uses 'goal' message instead
+        Sound.goal();
+        triggerGoalFx(who);
+        scoreP1.textContent = Game.state.score.p1;
+        scoreP2.textContent = Game.state.score.p2;
+        Multiplayer.send({ type: 'goal', who });
+        setTimeout(() => countdown(() => {}), 300);
       },
       onWin: who => {
-        if (asHost) {
-          Multiplayer.send({ type: 'win', who });
-        }
+        if (!asHost) return;      // client uses 'win' message instead
+        Multiplayer.send({ type: 'win', who });
         onWin(who);
       },
       onPaddleHit: power => Sound.paddleHit(power),
